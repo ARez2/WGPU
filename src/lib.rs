@@ -3,34 +3,16 @@ use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
 };
-use wgpu::{util::DeviceExt, Buffer, BindGroup};
-
 use winit::{window::Window};
-use cgmath::prelude::*;
-
 
 mod texture;
 mod camera;
-use camera::Camera;
 mod model;
-use model::{Vertex, DrawModel};
 mod resources;
 mod input;
 mod node;
 mod renderer;
 use renderer::Renderer;
-//mod state;
-//use state::State;
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -53,7 +35,6 @@ impl State {
         input.add_action("move_up", Some(VirtualKeyCode::Space), None);
         input.add_action("move_down", Some(VirtualKeyCode::LShift), None);
         input.add_action("LMB", None, Some(MouseButton::Left));
-
         
         let model = resources::load_model(
             "cube.obj",
@@ -66,21 +47,15 @@ impl State {
             model,
         }
     }
-
-    
     
 
-    
     /// indicate whether an event has been fully processed.
     /// If the method returns true, the main loop won't process the event any further.
     pub fn process_input(&mut self, event: &WindowEvent) -> bool {
-        //if let Some(controller) = &mut self.camera.camera_controller {
-        //    return controller.process_events(event);
-        //};
         let res = self.input.update(event);
-        
         res
     }
+
 
     pub fn process_mouse_motion(&mut self, move_delta: (f64, f64)) {
         if let Some(controller) = &mut self.renderer.camera.camera_controller {
@@ -90,7 +65,7 @@ impl State {
         };
     }
 
-    
+
     pub fn update(&mut self, delta: instant::Duration) {
         // TODO: Replace with scene tree (process every node)
         if let Some(controller) = &mut self.renderer.camera.camera_controller {
@@ -100,6 +75,7 @@ impl State {
         //     self.camera_controller.process_scroll(delta);
         self.renderer.update(delta);
     }
+
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         // TODO: Replace with scene tree as parameter
