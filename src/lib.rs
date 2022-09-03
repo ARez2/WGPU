@@ -1,7 +1,7 @@
 use node::Node;
 use winit::{
     event::*,
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop}, window::CursorGrabMode,
 };
 use winit::{window::Window};
 
@@ -59,9 +59,9 @@ impl State {
 
     pub fn process_mouse_motion(&mut self, move_delta: (f64, f64)) {
         if let Some(controller) = &mut self.renderer.camera.camera_controller {
-            if self.input.is_action_pressed("LMB") {
-                controller.process_mouse(move_delta.0, move_delta.1);
-            };
+            controller.process_mouse(move_delta.0, move_delta.1);
+            // if self.input.is_action_pressed("LMB") {
+            // };
         };
     }
 
@@ -96,6 +96,10 @@ pub async fn run() {
         .with_title(title)
         .build(&event_loop)
         .unwrap();
+    window.set_cursor_grab(CursorGrabMode::Confined)
+        .or_else(|_e| window.set_cursor_grab(CursorGrabMode::Locked))
+        .unwrap();
+    window.set_cursor_visible(false);
 
     let mut state = State::new(&window).await;
     let mut last_render_time = instant::Instant::now();
@@ -109,10 +113,12 @@ pub async fn run() {
                 event: DeviceEvent::MouseMotion{ delta, },
                 .. // We're not using device_id currently
             } => state.process_mouse_motion(delta),
+            
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() && !state.process_input(event) => {
+            } if window_id == window.id() => {
+                let inp = state.process_input(event);
                 match event {
                     #[cfg(not(target_arch="wasm32"))]
                     WindowEvent::CloseRequested
@@ -148,8 +154,11 @@ pub async fn run() {
                     // We're ignoring timeouts
                     Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
                 }
+            },
+            _ => {
+                state.process_mouse_motion((0.0, 0.0));
+                window.request_redraw();
             }
-            _ => {}
         }
     });
 }

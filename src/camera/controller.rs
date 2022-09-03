@@ -127,7 +127,7 @@ impl CameraController {
             camera_item.pitch = -Rad(SAFE_FRAC_PI_2);
         } else if camera_item.pitch > Rad(SAFE_FRAC_PI_2) {
             camera_item.pitch = Rad(SAFE_FRAC_PI_2);
-        }
+        };
     }
 }
 

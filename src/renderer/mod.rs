@@ -180,7 +180,7 @@ impl Renderer {
 
 
         let mut camera = camera::Camera::new(&config, &device);
-        let camera_controller = camera::controller::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::controller::CameraController::new(4.0, 1.0);
         camera.camera_controller = Some(camera_controller);
 
 
@@ -209,9 +209,6 @@ impl Renderer {
                 shader,
             )
         };
-
-        
-
 
         let light_render_pipeline = {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

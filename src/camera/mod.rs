@@ -54,7 +54,7 @@ impl Camera {
         });
 
         let temp_camera_item = camera_item::CameraItem::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
-        let projection = camera_item::Projection::new(config.width, config.height, cgmath::Deg(60.0), 0.1, 100.0);
+        let projection = camera_item::Projection::new(config.width, config.height, cgmath::Deg(60.0), 0.1, 500.0);
         
         let mut cam = Camera {
             camera_item: temp_camera_item,
