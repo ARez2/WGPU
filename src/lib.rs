@@ -1,21 +1,22 @@
+use node::Node;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
 };
-use wgpu::{util::DeviceExt, Buffer, BindGroupLayout, BindGroup};
+use wgpu::{util::DeviceExt, Buffer, BindGroup};
 use wgpu::{include_wgsl, Color};
 use winit::{window::Window};
 use cgmath::prelude::*;
 
 
 mod texture;
-use texture::Texture;
 mod camera;
 use camera::Camera;
 mod model;
 use model::{Vertex, DrawModel};
 mod resources;
+mod input;
+mod node;
 //mod state;
 //use state::State;
 
@@ -49,19 +50,24 @@ struct Instance {
 
 impl Instance {
     fn to_raw(&self) -> InstanceRaw {
+        let model =
+            cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation);
         InstanceRaw {
-            model: (cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation)).into(),
+            model: model.into(),
+            normal: cgmath::Matrix3::from(self.rotation).into(),
         }
     }
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[allow(dead_code)]
 struct InstanceRaw {
     model: [[f32; 4]; 4],
+    normal: [[f32; 3]; 3],
 }
 
-impl InstanceRaw {
+impl model::Vertex for InstanceRaw {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -79,8 +85,7 @@ impl InstanceRaw {
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 // A mat4 takes up 4 vertex slots as it is technically 4 vec4s. We need to define a slot
-                // for each vec4. We'll have to reassemble the mat4 in
-                // the shader.
+                // for each vec4. We don't have to do this in code though.
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 6,
@@ -96,10 +101,26 @@ impl InstanceRaw {
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
                 },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
             ],
         }
     }
 }
+
 
 
 
@@ -118,6 +139,7 @@ pub struct State {
     pub light_bind_group: BindGroup,
     pub light_render_pipeline: wgpu::RenderPipeline,
     pub camera: Camera,
+    pub input: input::Input,
     /// Make sure if you add new instances to the Vec, that you recreate the instance_buffer and as well as camera_bind_group, otherwise your new instances won't show up correctly.
     instances: Vec<Instance>,
     /// Make sure if you add new instances to the Vec, that you recreate the instance_buffer and as well as camera_bind_group, otherwise your new instances won't show up correctly.
@@ -199,6 +221,23 @@ impl State {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    // normal map
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
                 label: Some("texture_bind_group_layout"),
         });
@@ -208,11 +247,9 @@ impl State {
 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-        //(0.0, 1.0, 2.0).into()
         let aspect = config.width as f32 / config.height as f32;
-        let mut camera = Camera::new(aspect, &device);
-        let camera_controller = camera::controller::CameraController::new(0.2);
-        camera.eye = (0.0, 1.0, 2.0).into();
+        let mut camera = Camera::new(&config, &device);
+        let camera_controller = camera::controller::CameraController::new(4.0, 0.4);
         camera.camera_controller = Some(camera_controller);
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
@@ -301,9 +338,6 @@ impl State {
             )
         };
 
-        
-        
-        
 
         const SPACE_BETWEEN: f32 = 3.0;
         let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
@@ -333,6 +367,15 @@ impl State {
             }
         );
 
+        let mut input = input::Input::new();
+        input.add_action("move_left", Some(VirtualKeyCode::A), None);
+        input.add_action("move_right", Some(VirtualKeyCode::D), None);
+        input.add_action("move_forward", Some(VirtualKeyCode::W), None);
+        input.add_action("move_backward", Some(VirtualKeyCode::S), None);
+        input.add_action("move_up", Some(VirtualKeyCode::Space), None);
+        input.add_action("move_down", Some(VirtualKeyCode::LShift), None);
+        input.add_action("LMB", None, Some(MouseButton::Left));
+
         
         let model = resources::load_model(
             "cube.obj",
@@ -361,6 +404,7 @@ impl State {
             light_bind_group,
             light_render_pipeline,
             camera,
+            input,
             instances,
             instance_buffer,
             model,
@@ -374,6 +418,7 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.camera.projection.resize(new_size.width, new_size.height);
             self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
@@ -381,21 +426,38 @@ impl State {
     
     /// indicate whether an event has been fully processed.
     /// If the method returns true, the main loop won't process the event any further.
-    pub fn input(&mut self, event: &WindowEvent) -> bool {
+    pub fn process_input(&mut self, event: &WindowEvent) -> bool {
+        //if let Some(controller) = &mut self.camera.camera_controller {
+        //    return controller.process_events(event);
+        //};
+        let res = self.input.update(event);
+        
+        res
+    }
+
+    pub fn process_mouse_motion(&mut self, move_delta: (f64, f64)) {
         if let Some(controller) = &mut self.camera.camera_controller {
-            return controller.process_events(event);
+            if self.input.is_action_pressed("LMB") {
+                controller.process_mouse(move_delta.0, move_delta.1);
+            };
         };
-        false
     }
 
     
-    pub fn update(&mut self) {
-        self.camera.update(&self.queue);
+    pub fn update(&mut self, delta: instant::Duration) {
+        if let Some(controller) = &mut self.camera.camera_controller {
+            controller._process(&self.input, delta);
+        }
+        // WindowEvent::MouseWheel { delta, .. } => {
+        //     self.camera_controller.process_scroll(delta);
+
+        self.camera.update(&self.queue, delta);
+        
+        // Update Light transform
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position =
-            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(1.0))
-                * old_position)
-                .into();
+            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(60.0 * delta.as_secs_f32()))
+            * old_position).into();
         self.queue.write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light_uniform]));
     }
 
@@ -443,7 +505,12 @@ impl State {
                 &self.light_bind_group,
             );
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw_model_instanced(&self.model, 0..self.instances.len() as u32, &self.camera.camera_bind_group, &self.light_bind_group);
+            render_pass.draw_model_instanced(
+                &self.model,
+                0..self.instances.len() as u32,
+                &self.camera.camera_bind_group,
+                &self.light_bind_group
+            );
         }
 
         // submit will accept anything that implements IntoIter
@@ -508,9 +575,11 @@ fn create_render_pipeline(
         }),
         multisample: wgpu::MultisampleState {
             count: 1,
-            mask: !0, // use all
+            mask: !0,
             alpha_to_coverage_enabled: false,
         },
+        // If the pipeline will be used with a multiview render pass, this
+        // indicates how many array layers the attachments will have.
         multiview: None,
     });
     render_pipeline
@@ -519,58 +588,67 @@ fn create_render_pipeline(
 
 
 
-
+//#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub async fn run() {
     env_logger::init();
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let title = env!("CARGO_PKG_NAME");
+    let window = winit::window::WindowBuilder::new()
+        .with_title(title)
+        .build(&event_loop)
+        .unwrap();
 
     let mut state = State::new(&window).await;
+    let mut last_render_time = instant::Instant::now();
 
     event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Poll;
+
         match event {
+            Event::MainEventsCleared => window.request_redraw(),
+            Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion{ delta, },
+                .. // We're not using device_id currently
+            } => state.process_mouse_motion(delta),
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() => {
-                if !state.input(event) {
-                    match event {
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            input:
-                                KeyboardInput {
-                                    state: ElementState::Pressed,
-                                    virtual_keycode: Some(VirtualKeyCode::Escape),
-                                    ..
-                                },
-                            ..
-                        } => *control_flow = ControlFlow::Exit,
-                        WindowEvent::Resized(physical_size) => {
-                            state.resize(*physical_size);
-                        }
-                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                            state.resize(**new_inner_size);
-                        }
-                        _ => {}
+            } if window_id == window.id() && !state.process_input(event) => {
+                match event {
+                    #[cfg(not(target_arch="wasm32"))]
+                    WindowEvent::CloseRequested
+                    | WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                                ..
+                            },
+                        ..
+                    } => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Resized(physical_size) => {
+                        state.resize(*physical_size);
                     }
+                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                        state.resize(**new_inner_size);
+                    }
+                    _ => {}
                 }
-            }
+            },
             Event::RedrawRequested(window_id) if window_id == window.id() => {
-                state.update();
+                let now = instant::Instant::now();
+                let delta = now - last_render_time;
+                last_render_time = now;
+                state.update(delta);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e),
+                    // We're ignoring timeouts
+                    Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
                 }
-            }
-            Event::MainEventsCleared => {
-                // RedrawRequested will only trigger once, unless we manually
-                // request it.
-                window.request_redraw();
             }
             _ => {}
         }

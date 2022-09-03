@@ -1,26 +1,15 @@
-use wgpu::{Buffer, Device, Queue};
+use instant::Duration;
+use wgpu::{Device, Queue, SurfaceConfiguration};
 use wgpu::util::DeviceExt;
 
 pub mod uniform;
 pub mod controller;
+pub mod camera_item;
 
-
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-);
 
 pub struct Camera {
-    pub eye: cgmath::Point3<f32>,
-    pub target: cgmath::Point3<f32>,
-    pub up: cgmath::Vector3<f32>,
-    pub aspect: f32,
-    pub fovy: f32,
-    pub znear: f32,
-    pub zfar: f32,
+    pub camera_item: camera_item::CameraItem,
+    pub projection: camera_item::Projection,
     pub camera_controller: Option<controller::CameraController>,
     pub camera_uniform: uniform::CameraUniform,
     pub camera_buffer: wgpu::Buffer,
@@ -29,8 +18,8 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(new_aspect: f32, device: &Device) -> Camera {
-        let mut camera_uniform = uniform::CameraUniform::new();
+    pub fn new(config: &SurfaceConfiguration, device: &Device) -> Camera {
+        let camera_uniform = uniform::CameraUniform::new();
         let camera_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
@@ -42,7 +31,7 @@ impl Camera {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -64,38 +53,31 @@ impl Camera {
             label: Some("camera_bind_group"),
         });
 
+        let temp_camera_item = camera_item::CameraItem::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        let projection = camera_item::Projection::new(config.width, config.height, cgmath::Deg(60.0), 0.1, 100.0);
         
         let mut cam = Camera {
-            eye: (0.0, 0.0, 0.0).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
-            aspect: new_aspect,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
+            camera_item: temp_camera_item,
+            projection,
             camera_controller: None,
             camera_uniform: uniform::CameraUniform::new(),
             camera_buffer,
             camera_bind_group,
             camera_bind_group_layout,
         };
-        cam.camera_uniform.view_proj = cam.build_view_projection_matrix().into();
+        let camera_item = camera_item::CameraItem::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        cam.camera_uniform.update_view_proj(&camera_item, &cam.projection);
+        cam.camera_item = camera_item;
         cam
     }
 
-    pub fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
-        return OPENGL_TO_WGPU_MATRIX * proj * view;
-    }
 
-
-    pub fn update(&mut self, queue: &Queue) {
+    pub fn update(&mut self, queue: &Queue, delta: Duration) {
         if self.camera_controller.is_some() {
-            let controller = self.camera_controller.as_ref().unwrap();
-            (self.eye, self.target) = controller.update_camera(self.eye, self.target, self.up);
-        }
-        self.camera_uniform.view_proj = self.build_view_projection_matrix().into();
+            let controller = self.camera_controller.as_mut().unwrap();
+            controller.update_camera(&mut self.camera_item, delta);
+        };
+        self.camera_uniform.update_view_proj(&self.camera_item, &self.projection);
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
 }
